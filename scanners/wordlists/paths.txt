@@ -1,0 +1,6 @@
+# candidate traversal paths — grows from captures (feed-out)
+/flag.txt
+../../flag.txt
+../../../flag.txt
+....//....//flag.txt
+index.html

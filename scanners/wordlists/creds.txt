@@ -1,0 +1,7 @@
+# default credential pairs user:password — grows from captures (feed-out)
+admin:admin
+root:toor
+user:password
+admin:password
+root:admin
+guest:guest

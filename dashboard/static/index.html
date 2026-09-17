@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qpbot</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: #101418; color: #e8ecef; display: flex; height: 100vh; }
+  #chat { flex: 2; display: flex; flex-direction: column; border-right: 1px solid #2a3138; min-width: 0; }
+  #rail { flex: 1; min-width: 280px; max-width: 460px; overflow-y: auto; padding: 12px; background: #151b21; }
+  #log { flex: 1; overflow-y: auto; padding: 16px; }
+  .msg { margin: 0 0 12px; } .msg.you { color: #9fd0ff; } .msg small { color: #7d8892; }
+  #box { display: flex; padding: 12px; gap: 8px; }
+  #box input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #2a3138; background: #1a2129; color: inherit; }
+  button { padding: 10px 14px; border-radius: 8px; border: 0; background: #2f6fed; color: #fff; cursor: pointer; }
+  button.ghost { background: #2a3138; } button.danger { background: #b33636; }
+  .card { border: 1px solid #2a3138; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #1a2129; }
+  .card h3 { margin: 0 0 6px; font-size: 14px; } .card p { margin: 6px 0; font-size: 14px; }
+  .pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 8px 0; }
+  .pad button { padding: 12px 0; font-size: 16px; }
+  .pred { outline: 2px solid #2f6fed; }
+  input[type=password], input[type=text].cfg { width: 100%; padding: 8px; margin: 4px 0; border-radius: 6px; border: 1px solid #2a3138; background: #101418; color: inherit; }
+  label { font-size: 12px; color: #7d8892; }
+  @media (max-width: 700px) { body { flex-direction: column; } #rail { max-width: none; border-top: 1px solid #2a3138; } }
+</style>
+</head>
+<body>
+<div id="chat">
+  <div id="log"></div>
+  <div id="box"><input id="in" placeholder="type here…" autocomplete="off"><button onclick="send()">Send</button></div>
+</div>
+<div id="rail"><h3 style="margin-top:0">H-task rail</h3><div id="tasks"></div>
+  <div class="card"><h3>Provider + key</h3>
+    <label>OpenAI-compatible base URL</label>
+    <input id="base" class="cfg" type="text" placeholder="https://api.openai.com/v1">
+    <label>Model</label>
+    <input id="model" class="cfg" type="text" placeholder="vendor/model">
+    <button class="ghost" onclick="saveProv()">Save provider</button>
+    <label>Paste key (goes to vault, never chat)</label>
+    <input id="key" type="password" placeholder="sk-…" autocomplete="off">
+    <button onclick="saveKey()">Store key in vault</button>
+    <p id="keystate" style="font-size:13px"></p>
+  </div>
+</div>
+<script>
+const tok = new URLSearchParams(location.search).get("token") || "";
+const api = (m, p, b, opts) => {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), opts?.timeoutMs || 15000);
+  return fetch(p + "?token=" + encodeURIComponent(tok), {
+    method: m, headers: {"Content-Type": "application/json"},
+    body: b ? JSON.stringify(b) : undefined,
+    signal: ctrl.signal }).finally(() => clearTimeout(tid)).then(r => r.json());
+};
+const log = document.getElementById("log"), box = document.getElementById("in");
+function say(who, text) {
+  const d = document.createElement("div");
+  d.className = "msg" + (who === "you" ? " you" : "");
+  d.innerHTML = "<small>" + who + "</small><br>" + text.replace(/</g, "&lt;");
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+async function send() {
+  const v = box.value.trim(); if (!v) return; box.value = "";
+  say("you", v); say("…", "thinking");
+  try { const r = await api("POST", "/api/chat", {message: v}, {timeoutMs: 35000});
+    log.lastChild.remove(); say("agent", r.reply || "(empty)"); }
+  catch (e) { log.lastChild.remove(); say("agent", "error: " + (e.name === "AbortError" ? "request timed out" : e)); }
+}
+box.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+async function load() {
+  try {
+    const tasks = await api("GET", "/api/tasks");
+    const el = document.getElementById("tasks"); el.innerHTML = "";
+    tasks.filter(t => t.state !== "answered" && t.state !== "expired").forEach(t => {
+      const c = document.createElement("div"); c.className = "card";
+      let h = "<h3>" + t.kind + " · " + t.task_id + "</h3><p>" + t.question.replace(/</g, "&lt;") + "</p>";
+      if (t.prediction) h += "<p>prediction: <b>" + t.prediction + "</b> (" + t.confidence + ")</p>";
+      if (t.kind === "digit") {
+        h += '<div class="pad">' + [0,1,2,3,4,5,6,7,8,9].map(d =>
+          '<button class="' + (String(d) === String(t.prediction) ? "pred" : "ghost") + '" onclick="answer(\'' + t.task_id + "','" + d + "','" + (t.prediction || "") + '\')">' + d + "</button>").join("") + "</div>";
+      } else if (t.kind === "confirm") {
+        h += '<button onclick="answer(\'' + t.task_id + "','approve','')\">Approve</button> <button class="danger" onclick="answer(\'' + t.task_id + "','reject','')\">Reject</button>";
+      } else if (t.kind === "secret") {
+        h += '<input type="password" id="s-' + t.task_id + '" placeholder="paste secret">';
+      }
+      c.innerHTML = h; el.appendChild(c);
+    });
+  } catch (e) {}
+}
+async function answer(id, value, pred) {
+  await api("POST", "/api/answer", {task_id: id, value, prediction: pred});
+  load();
+}
+async function saveProv() {
+  await api("POST", "/api/provider", {base_url: document.getElementById("base").value, model: document.getElementById("model").value});
+  say("agent", "provider saved.");
+}
+async function saveKey() {
+  const k = document.getElementById("key"); if (!k.value) return;
+  await api("POST", "/api/vault-store", {name: "LLM_KEY", value: k.value, scope: "chat", ttl_s: 86400});
+  k.value = ""; document.getElementById("keystate").textContent = "stored in vault.";
+  say("agent", "key stored. chat is live.");
+}
+load(); setInterval(load, 3000);
+</script>
+</body>
+</html>

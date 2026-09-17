@@ -1,0 +1,4 @@
+{
+  "pack": "demo",
+  "targets": ["weak-creds-01", "traversal-01", "sqli-sim-01"]
+}
