@@ -49,8 +49,10 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:var(--bg);color:va
 .bottom-content .line .info{color:var(--blue)}
 .bottom-content .line .ok{color:var(--green)}
 .bottom-content .line .err{color:var(--red)}
-/* Chat sidebar */
-.chat-panel{width:320px;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg2)}
+/* Chat panel */
+.chat-panel{width:320px;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg2);position:relative}
+.chat-divider{width:4px;cursor:col-resize;background:transparent;position:absolute;left:-2px;top:0;bottom:0;z-index:10}
+.chat-divider:hover,.chat-divider.dragging{background:var(--accent)}
 .chat-messages{flex:1;overflow-y:auto;padding:12px}
 .chat-msg{margin-bottom:8px;font-size:12px}
 .chat-msg .who{color:var(--dim);font-size:10px}
@@ -125,6 +127,7 @@ body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:var(--bg);color:va
 
   <!-- Chat Panel -->
   <div class="chat-panel" id="chat-panel">
+    <div class="chat-divider" id="chat-divider"></div>
     <div class="sidebar-header">Agent</div>
     <div class="chat-messages" id="chat-messages"></div>
     <div class="chat-input">
@@ -243,9 +246,10 @@ async function openFile(path){
   try{
     const d=await api('POST','/api/file/read',{path});
     const editor=document.getElementById('editor-main');
-    editor.innerHTML=`<textarea id="file-editor" spellcheck="false">${d.content||''}</textarea>`;
+    editor.innerHTML=`<div style="display:flex;justify-content:flex-end;padding:4px 8px;background:var(--bg3);border-bottom:1px solid var(--border)"><button onclick="saveFile('${path}')" style="padding:3px 12px;font-size:11px">Save (Ctrl+S)</button></div><textarea id="file-editor" spellcheck="false">${d.content||''}</textarea>`;
     document.getElementById('file-editor').addEventListener('keydown',e=>{
       if(e.key==='Tab'){e.preventDefault();const t=e.target,s=t.selectionStart;t.value=t.value.substring(0,s)+'  '+t.value.substring(t.selectionEnd);t.selectionStart=t.selectionEnd=s+2}
+      if(e.ctrlKey&&e.key==='s'){e.preventDefault();saveFile(activeFile)}
     });
   }catch(e){document.getElementById('editor-main').innerHTML=`<div style="padding:16px;color:var(--red)">Error: ${e.message}</div>`}
 }
@@ -262,22 +266,62 @@ function closeTab(path,e){
   renderTabs();
 }
 
+async function saveFile(path){
+  const ta=document.getElementById('file-editor');
+  if(!ta||!path)return;
+  try{
+    await api('POST','/api/file/write',{path:path,content:ta.value});
+    logBottom('Saved: '+path,'ok');
+  }catch(e){logBottom('Save failed: '+e.message,'err')}
+}
+
 // Chat
-function chatMsg(who,text){
+function chatMsg(who,text,id){
   const d=document.createElement('div');d.className='chat-msg '+(who==='you'?'you':'');
+  if(id)d.id=id;
   d.innerHTML=`<div class="who">${who}</div><div class="text">${esc(text).replace(/\n/g,'<br>')}</div>`;
   document.getElementById('chat-messages').appendChild(d);
   document.getElementById('chat-messages').scrollTop=999999;
+  return d;
+}
+function updateMsg(id,text){
+  const d=document.getElementById(id);
+  if(d)d.querySelector('.text').innerHTML=esc(text).replace(/\n/g,'<br>');
 }
 function esc(s){return s.replace(/</g,'&lt;')}
 
+let _pollTimer=null;
+function startActivityPoll(msgId){
+  if(_pollTimer)clearInterval(_pollTimer);
+  _pollTimer=setInterval(()=>{
+    const el=document.getElementById(msgId);
+    if(!el){stopActivityPoll();return;}
+    const cur=el.querySelector('.text').textContent;
+    const dots=cur.match(/(\.*$)/)[0];
+    if(dots.length<6)updateMsg(msgId,cur+'.');
+    else updateMsg(msgId,cur.replace(/\.+$/,''));
+  },800);
+}
+function stopActivityPoll(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
+
 async function sendChat(){
   const inp=document.getElementById('chat-in');const v=inp.value.trim();if(!v)return;inp.value='';
-  chatMsg('you',v);chatMsg('…','thinking');
-  try{const r=await api('POST','/api/chat',{message:v},{timeoutMs:60000});
-    const lg=document.getElementById('chat-messages');lg.lastChild.remove();
-    chatMsg('agent',r.reply||'(empty)');
-  }catch(e){document.getElementById('chat-messages').lastChild.remove();chatMsg('agent','Error: '+e.message)}
+  chatMsg('you',v);
+  const msgId='msg-'+Date.now();
+  chatMsg('⏳ Connecting to Pi agent...',msgId);
+  try{
+    stopActivityPoll();
+    startActivityPoll(msgId);
+    const r=await api('POST','/api/chat',{message:v},{timeoutMs:120000});
+    stopActivityPoll();
+    // Check for tool activity in reply
+    const tools=(r.tools_called||[]);
+    const toolStr=tools.length?`\n\n[tools: ${tools.join(', ')}]`:'';
+    updateMsg(msgId,r.reply?r.reply+toolStr:'(empty)');
+  }catch(e){
+    stopActivityPoll();
+    updateMsg(msgId,'Error: '+(e.name==='AbortError'?'timeout (120s)':e.message));
+  }
 }
 document.getElementById('chat-in').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat()});
 async function quickChat(msg){document.getElementById('chat-in').value=msg;sendChat()}
@@ -316,6 +360,16 @@ async function runCmd(cmd){
 // Init
 renderChatSidebar();
 loadBottomMissions();
+
+// Resizable chat panel
+(function(){
+  const divider=document.getElementById('chat-divider');
+  const panel=document.getElementById('chat-panel');
+  let dragging=false,startX,startW;
+  divider.addEventListener('mousedown',e=>{dragging=true;startX=e.clientX;startW=panel.offsetWidth;divider.classList.add('dragging');e.preventDefault()});
+  document.addEventListener('mousemove',e=>{if(!dragging)return;const w=startW-(e.clientX-startX);panel.style.width=Math.max(200,Math.min(600,w))+'px'});
+  document.addEventListener('mouseup',()=>{if(dragging){dragging=false;divider.classList.remove('dragging')}});
+})();
 </script>
 </body>
 </html>

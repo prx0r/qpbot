@@ -36,7 +36,8 @@ from scanners.registry import fire as registry_fire
 def run_worker(objective: str, tools: list[str] | None = None,
                max_turns: int = 10, model: str = "",
                use_rsi: bool = True, force: bool = False,
-               wallet_address: str = "") -> dict:
+               wallet_address: str = "",
+               log_callback=None) -> dict:
     """Execute a mission with RSI feedback.
 
     The RSI loop:
@@ -119,6 +120,8 @@ When you have enough findings, summarize them."""
 
     # ── LLM loop ──
     for turn in range(max_turns):
+        if log_callback:
+            log_callback(turn, "llm_call", model=model)
         # Call LLM
         try:
             headers = {"Content-Type": "application/json",
@@ -147,6 +150,17 @@ When you have enough findings, summarize them."""
                                         method="POST")
             with urllib.request.urlopen(req, timeout=60) as r:
                 resp = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and turn < 3:
+                wait = 2 ** turn
+                if log_callback:
+                    log_callback(turn, "retry", error=f"429, waiting {wait}s")
+                time.sleep(wait)
+                continue
+            invlog.log_end(run_id, "failed", turn, len(findings), False)
+            return {"ok": False, "error": f"API error: {e}",
+                    "run_id": run_id, "findings": findings,
+                    "tokens_in": run_ti, "tokens_out": run_to}
         except Exception as e:
             invlog.log_end(run_id, "failed", turn, len(findings), False)
             return {"ok": False, "error": f"API error: {e}",
@@ -207,6 +221,11 @@ When you have enough findings, summarize them."""
                     "data": result["data"],
                     "turn": turn + 1,
                 })
+
+            if log_callback:
+                log_callback(turn, "tool_exec", tool=tool_name, args=tool_args,
+                            ok=result.get("ok"), duration_ms=duration_ms,
+                            findings_count=len(findings))
 
             messages.append({"role": "user", "content": f"Result:\n{result_str[:2000]}"})
         else:

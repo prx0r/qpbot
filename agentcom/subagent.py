@@ -1,16 +1,25 @@
 """Sub-agent spawner — cheap algorithmic workers in background.
 
 Main agent talks to user. Sub-agents run as nohup background processes
-with hardcoded system prompts. Results write to runs/subagents/.
+with hardcoded or custom system prompts. Results write to runs/subagents/.
+
+Fixes from northstar review:
+- Content-addressed run IDs (no collisions)
+- Real-time log streaming
+- Custom prompts from main LLM
+- Process timeout monitoring
+- Step-level logging
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(ROOT, "runs", "subagents")
@@ -23,13 +32,12 @@ from agentcom import monitor
 class SubAgentConfig:
     name: str
     description: str
-    model: str  # cheap model for sub-agents
+    model: str
     system_prompt: str
     tools: list[str] = field(default_factory=list)
     max_turns: int = 10
     budget_tokens: int = 5000
     timeout_s: int = 300
-    output_file: str = ""  # auto-generated if empty
 
 
 # ── Sub-agent configs ────────────────────────────────────────
@@ -140,23 +148,94 @@ Be efficient. One target at a time. Submit flags immediately.""",
 ))
 
 
+# ── Helpers ──────────────────────────────────────────────────
+
+def _make_run_id(objective: str, model: str) -> str:
+    """Content-addressed run ID — no collisions."""
+    content = f"{objective}:{model}:{time.time_ns()}"
+    h = hashlib.sha256(content.encode()).hexdigest()[:12]
+    return f"sa:{h}"
+
+
+def stream_logs(run_id: str):
+    """Yield log lines as they're written (polls every 0.5s)."""
+    log_dir = os.path.join(RESULTS_DIR)
+    if not os.path.exists(log_dir):
+        return
+    for f in os.listdir(log_dir):
+        if run_id in f and f.endswith(".log"):
+            log_path = os.path.join(log_dir, f)
+            with open(log_path) as fp:
+                while True:
+                    line = fp.readline()
+                    if line:
+                        yield line.rstrip("\n")
+                    else:
+                        time.sleep(0.5)
+                        # Check if process is still running
+                        if os.path.exists(log_path.replace(".log", ".json")):
+                            break  # result file exists, process done
+            return
+
+
+def get_log(run_id: str) -> str:
+    """Get full log content for a run."""
+    log_dir = os.path.join(RESULTS_DIR)
+    if not os.path.exists(log_dir):
+        return ""
+    for f in os.listdir(log_dir):
+        if run_id in f and f.endswith(".log"):
+            return open(os.path.join(log_dir, f)).read()
+    return ""
+
+
+def get_status(run_id: str) -> dict | None:
+    """Get live status of a sub-agent run."""
+    status_path = os.path.join(RESULTS_DIR, f"{run_id}.status.json")
+    if os.path.exists(status_path):
+        return json.load(open(status_path))
+    # Check if result file exists (completed)
+    for f in os.listdir(RESULTS_DIR):
+        if run_id in f and f.endswith(".json") and not f.endswith(".status.json"):
+            data = json.load(open(os.path.join(RESULTS_DIR, f)))
+            return {
+                "run_id": run_id,
+                "status": "completed" if data.get("result", {}).get("ok") else "failed",
+                "started": data.get("timestamp"),
+                "finished": data.get("timestamp"),
+            }
+    return None
+
+
 # ── Spawner ──────────────────────────────────────────────────
 
 def spawn(subagent_name: str, extra_context: str = "",
-          wallet_address: str = "", repo_url: str = "") -> dict:
-    """Spawn a sub-agent as a background process. Returns spawn info."""
+          wallet_address: str = "", repo_url: str = "",
+          prompt: str = "") -> dict:
+    """Spawn a sub-agent as a background process.
+
+    Args:
+        subagent_name: which sub-agent to run
+        extra_context: additional context appended to system prompt
+        wallet_address: target wallet for investigation
+        repo_url: target repo for scanning
+        prompt: custom prompt from main LLM (overrides system prompt)
+    """
     if subagent_name not in SUBAGENTS:
         return {"ok": False, "error": f"unknown sub-agent: {subagent_name}. "
                 f"Available: {list(SUBAGENTS.keys())}"}
 
     cfg = SUBAGENTS[subagent_name]
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    run_id = f"sa-{int(time.time())}"
-    output_file = os.path.join(RESULTS_DIR, f"{subagent_name}-{run_id}.json")
-    stdout_file = os.path.join(RESULTS_DIR, f"{subagent_name}-{run_id}.log")
+    run_id = _make_run_id(subagent_name + (prompt or extra_context), cfg.model)
+    output_file = os.path.join(RESULTS_DIR, f"{run_id}.json")
+    stdout_file = os.path.join(RESULTS_DIR, f"{run_id}.log")
 
-    # Build the worker command
-    context = cfg.system_prompt
+    # Build the worker command — custom prompt overrides system prompt
+    if prompt:
+        context = prompt
+    else:
+        context = cfg.system_prompt
     if extra_context:
         context += f"\n\nAdditional context: {extra_context}"
     if wallet_address:
@@ -169,7 +248,7 @@ def spawn(subagent_name: str, extra_context: str = "",
     with open(prompt_file, "w") as f:
         f.write(context)
 
-    # Build Python worker script
+    # Build Python worker script with step logging + retry
     worker_script = f"""
 import sys, json, os, time
 sys.path.insert(0, {ROOT!r})
@@ -182,15 +261,33 @@ from agentcom.vault.store import Vault
 with open({prompt_file!r}) as f:
     objective = f.read().strip()
 
+# Log file for real-time step logging
+LOG_FILE = {stdout_file!r}
+
+def log_step(turn, event, **kw):
+    entry = {{"ts": int(time.time()), "turn": turn, "event": event}}
+    entry.update(kw)
+    with open(LOG_FILE, "a") as f:
+        f.write(json.dumps(entry) + "\\n")
+        f.flush()
+
+log_step(0, "start", objective=objective[:200])
+
 # Run the worker
-result = run_worker(
-    objective,
-    tools={cfg.tools!r},
-    max_turns={cfg.max_turns},
-    model="{cfg.model}",
-    use_rsi=True,
-    force=True,
-)
+try:
+    result = run_worker(
+        objective,
+        tools={cfg.tools!r},
+        max_turns={cfg.max_turns},
+        model="{cfg.model}",
+        use_rsi=True,
+        force=True,
+        log_callback=log_step,
+    )
+    log_step(0, "complete", ok=result.get("ok"), findings=len(result.get("findings",[])))
+except Exception as e:
+    result = {{"ok": False, "error": str(e), "findings": [], "tokens_in": 0, "tokens_out": 0}}
+    log_step(0, "error", error=str(e))
 
 # Write results
 output = {{
@@ -222,6 +319,25 @@ print(json.dumps(output))
     monitor.register(run_id, subagent_name, proc.pid, output_file)
     log_subagent_spawn(subagent_name, proc.pid, run_id)
 
+    # Start timeout monitor thread
+    timeout_s = cfg.timeout_s
+    def _timeout_watch():
+        start = time.time()
+        while proc.poll() is None:
+            if time.time() - start > timeout_s:
+                proc.kill()
+                monitor.complete(run_id, ok=False, error="timeout")
+                log_subagent_complete(run_id, ok=False, error="timeout")
+                with open(stdout_file, "a") as f:
+                    f.write(json.dumps({"ts": int(time.time()), "event": "timeout",
+                                        "timeout_s": timeout_s}) + "\\n")
+                return
+            time.sleep(5)
+        # Process ended naturally
+        monitor.complete(run_id, ok=True)
+
+    threading.Thread(target=_timeout_watch, daemon=True).start()
+
     return {
         "ok": True,
         "run_id": run_id,
@@ -229,8 +345,10 @@ print(json.dumps(output))
         "pid": proc.pid,
         "output_file": output_file,
         "stdout_file": stdout_file,
+        "log_file": stdout_file,
         "model": cfg.model,
         "description": cfg.description,
+        "timeout_s": cfg.timeout_s,
     }
 
 
@@ -242,6 +360,7 @@ def list_subagents() -> dict:
             "model": cfg.model,
             "tools": cfg.tools,
             "max_turns": cfg.max_turns,
+            "timeout_s": cfg.timeout_s,
         }
         for name, cfg in SUBAGENTS.items()
     }
@@ -253,7 +372,7 @@ def list_runs() -> list[dict]:
         return []
     runs = []
     for f in sorted(os.listdir(RESULTS_DIR)):
-        if f.endswith(".json") and not f.endswith("-prompt.txt"):
+        if f.endswith(".json") and not f.endswith("-prompt.txt") and not f.endswith(".status.json"):
             try:
                 data = json.load(open(os.path.join(RESULTS_DIR, f)))
                 runs.append({
@@ -275,7 +394,7 @@ def read_run(run_id: str) -> dict | None:
     if not os.path.exists(RESULTS_DIR):
         return None
     for f in os.listdir(RESULTS_DIR):
-        if f.endswith(".json") and run_id in f:
+        if f.endswith(".json") and run_id in f and not f.endswith(".status.json"):
             try:
                 return json.load(open(os.path.join(RESULTS_DIR, f)))
             except Exception:

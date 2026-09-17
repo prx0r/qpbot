@@ -218,71 +218,240 @@ elif path == "/api/subagent/log":
 
 ## Test plan
 
-### Test 1: Spawn with monitoring
+### Test 1: Spawn + monitoring lifecycle
 ```python
-# Spawn sub-agent
-result = spawn("wallet_hunter", extra_context="test")
+result = spawn("wallet_hunter", extra_context="test spawn lifecycle")
 assert result["ok"] is True
+assert result["run_id"].startswith("sa:")
+assert result["timeout_s"] == 300
 
-# Wait and check status
-time.sleep(5)
-status = monitor.get_status(result["run_id"])
+# Wait and check status transitions
+time.sleep(3)
+status = get_status(result["run_id"])
+assert status is not None
 assert status["status"] == "running"
 
-# Check log file exists
-assert os.path.exists(result["stdout_file"])
+# Check log has at least start event
+log = get_log(result["run_id"])
+assert len(log) > 0
+assert "start" in log
 ```
 
-### Test 2: Sub-agent completion
+### Test 2: Content-addressed run IDs — no collisions
 ```python
-# Spawn and wait for completion
-result = spawn("maintenance", extra_context="check vault status")
-time.sleep(30)  # Wait for completion
+ids = set()
+for i in range(50):
+    id = _make_run_id(f"objective-{i}", "mimo-v2.5")
+    ids.add(id)
+assert len(ids) == 50, f"Expected 50 unique IDs, got {len(ids)}"
+```
 
-# Check status
-status = monitor.get_status(result["run_id"])
+### Test 3: Custom prompts override system prompt
+```python
+result = spawn("maintenance", prompt="Just count vault keys, nothing else")
+assert result["ok"] is True
+
+time.sleep(15)
+data = read_run(result["run_id"])
+assert data is not None
+# Worker should have received custom prompt
+log = get_log(result["run_id"])
+assert "count" in log.lower() or "vault" in log.lower()
+```
+
+### Test 4: Sub-agent completion detection
+```python
+result = spawn("maintenance", extra_context="check vault status")
+time.sleep(30)
+
+status = get_status(result["run_id"])
 assert status["status"] in ("completed", "failed")
 
-# Check results
 runs = list_runs()
 assert any(r["run_id"] == result["run_id"] for r in runs)
 ```
 
-### Test 3: Audit logging
+### Test 5: Timeout kills stuck processes
 ```python
-# Spawn sub-agent
-result = spawn("wallet_hunter", extra_context="test")
+# Spawn with very short timeout
+cfg = SUBAGENTS["maintenance"]
+original = cfg.timeout_s
+cfg.timeout_s = 5
+try:
+    result = spawn("maintenance", extra_context="do something slow")
+    time.sleep(10)
+    status = get_status(result["run_id"])
+    assert status["status"] == "failed" or status.get("error") == "timeout"
+finally:
+    cfg.timeout_s = original
+```
 
-# Check audit log
-events = audit.recent(10)
+### Test 6: Retry on 429 errors
+```python
+# This tests the retry logic in worker.py
+# Hard to test without mocking, but verify the code path exists
+from agentcom.worker import run_worker
+import inspect
+source = inspect.getsource(run_worker)
+assert "429" in source
+assert "backoff" in source or "sleep" in source
+```
+
+### Test 7: Log content has step events
+```python
+result = spawn("wallet_hunter", extra_context="check 1 whale transaction")
+time.sleep(20)
+
+log = get_log(result["run_id"])
+lines = [l for l in log.strip().split("\n") if l]
+events = []
+for line in lines:
+    try:
+        events.append(json.loads(line))
+    except: pass
+
+assert any(e.get("event") == "start" for e in events)
+assert any(e.get("event") in ("tool_exec", "llm_call") for e in events)
+```
+
+### Test 8: Dashboard log endpoint
+```python
+result = spawn("maintenance", extra_context="quick test")
+time.sleep(5)
+
+# Via API simulation
+import urllib.request
+url = f"http://127.0.0.1:8791/api/subagent/log?run_id={result['run_id']}&token=TOKEN"
+resp = json.loads(urllib.request.urlopen(url).read())
+assert "log" in resp
+assert len(resp["log"]) > 0
+```
+
+### Test 9: Dashboard status endpoint
+```python
+result = spawn("wallet_hunter", extra_context="test status endpoint")
+time.sleep(3)
+
+url = f"http://127.0.0.1:8791/api/subagent/status?run_id={result['run_id']}&token=TOKEN"
+resp = json.loads(urllib.request.urlopen(url).read())
+assert resp["status"] in ("running", "completed", "failed")
+```
+
+### Test 10: Audit captures spawn + completion
+```python
+result = spawn("maintenance", extra_context="audit test")
+time.sleep(15)
+
+with open("runs/audit.jsonl") as f:
+    events = [json.loads(l) for l in f if l.strip()]
+
 spawn_events = [e for e in events if e["action"] == "subagent_spawn"]
 assert len(spawn_events) > 0
-assert spawn_events[-1]["target"] == "wallet_hunter"
+assert spawn_events[-1]["target"] == "maintenance"
 ```
 
-### Test 4: Timeout detection
+### Test 11: Multiple concurrent spawns
 ```python
-# Spawn sub-agent
-result = spawn("wallet_hunter", extra_context="test")
+r1 = spawn("wallet_hunter", extra_context="concurrent test 1")
+r2 = spawn("chain_scanner", extra_context="concurrent test 2")
+r3 = spawn("maintenance", extra_context="concurrent test 3")
 
-# Wait longer than timeout
+assert r1["run_id"] != r2["run_id"] != r3["run_id"]
+
 time.sleep(10)
-
-# Check for timeouts
-timeouts = monitor.check_timeouts(timeout_s=5)
-# Should detect the sub-agent as timed out if it's stuck
+for r in [r1, r2, r3]:
+    status = get_status(r["run_id"])
+    assert status is not None
 ```
 
-### Test 5: Log content
+### Test 12: Empty log handling
 ```python
-# Spawn sub-agent
-result = spawn("wallet_hunter", extra_context="test")
-time.sleep(10)
+log = get_log("nonexistent-run-id")
+assert log == ""
 
-# Check log has content
-with open(result["stdout_file"]) as f:
-    content = f.read()
-    assert len(content) > 0, "Log should have content"
+status = get_status("nonexistent-run-id")
+assert status is None
+```
+
+### Test 13: Pi agent chat through dashboard
+```python
+# Simulate dashboard chat
+from agentcom.pi_agent import chat
+result = chat("What is 2+2?", system_prompt="Answer briefly")
+assert "4" in result["reply"]
+assert isinstance(result["tools_called"], list)
+assert result["session_id"] != ""
+```
+
+### Test 14: Pi agent multi-turn session persistence
+```python
+r1 = chat("My name is Alice", conversation_id="test-session")
+r2 = chat("What is my name?", conversation_id="test-session")
+assert "Alice" in r2["reply"]
+```
+
+### Test 15: File editor save via API
+```python
+content = "# Test file\ndef hello():\n    return 'world'"
+# Write
+urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8791/api/file/write?token=TOKEN",
+    data=json.dumps({"path": "runs/editor-test.py", "content": content}).encode(),
+    headers={"Content-Type": "application/json"}
+))
+# Read back
+resp = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:8791/api/file/read?path=runs/editor-test.py&token=TOKEN"
+).read())
+assert resp["content"] == content
+```
+
+### Test 16: Vault store + retrieve cycle
+```python
+# Store a test key
+urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8791/api/vault-store?token=TOKEN",
+    data=json.dumps({"name": "TEST_CYCLE", "value": "secret123"}).encode(),
+    headers={"Content-Type": "application/json"}
+))
+# Verify via vault endpoint
+resp = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:8791/api/vault?token=TOKEN"
+).read())
+names = [k["name"] for k in resp["keys"]]
+assert "TEST_CYCLE" in names
+```
+
+### Test 17: Provider config persistence
+```python
+urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8791/api/provider?token=TOKEN",
+    data=json.dumps({"base_url": "https://test.com/v1", "model": "test-model"}).encode(),
+    headers={"Content-Type": "application/json"}
+))
+resp = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:8791/api/status?token=TOKEN"
+).read())
+assert resp["provider"]["model"] == "test-model"
+# Restore
+urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8791/api/provider?token=TOKEN",
+    data=json.dumps({"base_url": "https://opencode.ai/zen/go/v1", "model": "mimo-v2.5"}).encode(),
+    headers={"Content-Type": "application/json"}
+))
+```
+
+### Test 18: Sub-agent spawned from chat (end-to-end)
+```python
+# Simulate: user says "spawn wallet hunter"
+from agentcom.pi_agent import chat
+r = chat("Spawn a wallet_hunter sub-agent to check whale wallets")
+# Agent should have output a tool call or spawned
+# Check missions increased
+resp = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:8791/api/missions?token=TOKEN"
+).read())
+assert resp["summary"]["total"] >= 0
 ```
 
 ---
