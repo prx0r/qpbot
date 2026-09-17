@@ -1,16 +1,26 @@
-# qpbot — Agent Quick Reference
+# qpbot — Agent Quick Reference (blueteamer)
 
 ## What this is
 
-qpbot is an autonomous red-team system with:
+qpbot is blueteamer's simulation environment for testing autonomous agents:
 - CTF arena (3 targets, server-side verification)
 - Vault (encrypted API keys, scoped grants)
 - On-chain tools (whale feed, ETH/SOL balance, FOMO, GitHub search)
 - LLM harness (mimo-v2.5 via OpenCode Go)
-- Sub-agents (background workers)
+- Sub-agents (background workers with unique run IDs)
 - Dashboard (web UI at localhost:8791)
 - Audit logging (every mutation traced)
 - RSI (recursive self-improvement via memory)
+- QP proofs (every finding validated with receipts)
+
+## Your role
+
+You are a blueteamer agent. You test our systems. Everything you do is:
+- Logged to runs/ (JSONL, timestamped)
+- Validated with QP proofs (receipts)
+- Audited (every mutation traced)
+
+You never trust — you prove.
 
 ## Quick commands
 
