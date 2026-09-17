@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from agentcom.audit import log_api_call, log_file_read, log_file_write, log_llm_call
+
 TOKEN = os.environ.get("DASH_TOKEN", secrets.token_urlsafe(24))
 RUNS = os.path.join(ROOT, "runs")
 HFILE = os.path.join(RUNS, "htasks.json")
@@ -366,6 +368,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"text": format_insights(i)})
         elif path == "/api/history":
             self._json(HISTORY[-30:])
+        elif path == "/api/audit":
+            from agentcom.audit import recent
+            self._json({"events": recent(int(parse_qs(urlparse(self.path).query).get("n", ["20"])[0]))})
+        elif path == "/api/subagent/statuses":
+            from agentcom.monitor import list_statuses, summary
+            self._json({"statuses": list_statuses(), "summary": summary()})
         elif path == "/api/workflows":
             from agentcom.workflows import WORKFLOWS
             self._json({"workflows": {name: {"goal": wf["goal"],
@@ -382,6 +390,19 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/subagent/runs":
             from agentcom.subagent import list_runs
             self._json({"runs": list_runs()})
+        elif path == "/api/files":
+            files = []
+            for d in ["core", "agentcom", "dashboard", "scanners", "scripts"]:
+                dp = os.path.join(ROOT, d)
+                if os.path.isdir(dp):
+                    for f in sorted(os.listdir(dp)):
+                        if f.endswith((".py", ".md", ".json", ".sh")):
+                            files.append(f"{d}/{f}")
+            self._json(files)
+        elif path == "/api/vault":
+            from agentcom.vault.store import Vault
+            v = Vault(os.path.expanduser("~/.qpbot/vault.json"))
+            self._json({"keys": v.find(active_only=False)})
         else:
             self.send_response(404)
             self.end_headers()
@@ -392,6 +413,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         body = self._body()
         if path == "/api/chat":
+            msg_preview = str(body.get("message", ""))[:100]
+            log_api_call("/api/chat", target=msg_preview)
             self._json({"reply": _chat_via_provider(
                 str(body.get("message", ""))[:4000])})
         elif path == "/api/system-prompt":
@@ -532,6 +555,33 @@ class Handler(BaseHTTPRequestHandler):
                 sa = "wallet_hunter"  # default
             result = spawn(sa, extra_context=str(body.get("message", "")))
             self._json({"spawned": sa, **result})
+        elif path == "/api/file/read":
+            fpath = str(body.get("path", ""))
+            full = os.path.join(ROOT, fpath)
+            if not os.path.exists(full) or not full.startswith(ROOT):
+                self._json({"error": "not found"}, 404)
+            else:
+                log_file_read(fpath)
+                try:
+                    content = open(full).read()
+                    self._json({"path": fpath, "content": content})
+                except Exception as e:
+                    self._json({"error": str(e)}, 500)
+        elif path == "/api/file/write":
+            fpath = str(body.get("path", ""))
+            content = str(body.get("content", ""))
+            full = os.path.join(ROOT, fpath)
+            if not full.startswith(ROOT):
+                self._json({"error": "invalid path"}, 400)
+            else:
+                log_file_write(fpath)
+                try:
+                    os.makedirs(os.path.dirname(full), exist_ok=True)
+                    with open(full, "w") as f:
+                        f.write(content)
+                    self._json({"ok": True, "path": fpath})
+                except Exception as e:
+                    self._json({"error": str(e)}, 500)
         else:
             self.send_response(404)
             self.end_headers()

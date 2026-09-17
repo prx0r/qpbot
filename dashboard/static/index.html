@@ -4,105 +4,318 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>qpbot</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.35/dist/codicon.min.css">
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: #101418; color: #e8ecef; display: flex; height: 100vh; }
-  #chat { flex: 2; display: flex; flex-direction: column; border-right: 1px solid #2a3138; min-width: 0; }
-  #rail { flex: 1; min-width: 280px; max-width: 460px; overflow-y: auto; padding: 12px; background: #151b21; }
-  #log { flex: 1; overflow-y: auto; padding: 16px; }
-  .msg { margin: 0 0 12px; } .msg.you { color: #9fd0ff; } .msg small { color: #7d8892; }
-  #box { display: flex; padding: 12px; gap: 8px; }
-  #box input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #2a3138; background: #1a2129; color: inherit; }
-  button { padding: 10px 14px; border-radius: 8px; border: 0; background: #2f6fed; color: #fff; cursor: pointer; }
-  button.ghost { background: #2a3138; } button.danger { background: #b33636; }
-  .card { border: 1px solid #2a3138; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #1a2129; }
-  .card h3 { margin: 0 0 6px; font-size: 14px; } .card p { margin: 6px 0; font-size: 14px; }
-  .pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 8px 0; }
-  .pad button { padding: 12px 0; font-size: 16px; }
-  .pred { outline: 2px solid #2f6fed; }
-  input[type=password], input[type=text].cfg { width: 100%; padding: 8px; margin: 4px 0; border-radius: 6px; border: 1px solid #2a3138; background: #101418; color: inherit; }
-  label { font-size: 12px; color: #7d8892; }
-  @media (max-width: 700px) { body { flex-direction: column; } #rail { max-width: none; border-top: 1px solid #2a3138; } }
+:root{--bg:#1e1e1e;--bg2:#252526;--bg3:#2d2d2d;--bg4:#3c3c3c;--border:#404040;--text:#cccccc;--dim:#808080;--blue:#569cd6;--green:#4ec9b0;--red:#f44747;--yellow:#dcdcaa;--accent:#007acc}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+/* Titlebar */
+.titlebar{height:30px;background:var(--bg3);display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--dim);border-bottom:1px solid var(--border);-webkit-app-region:drag}
+.titlebar .menu{display:flex;gap:4px;-webkit-app-region:no-drag}
+.titlebar .menu span{padding:2px 8px;border-radius:4px;cursor:pointer}
+.titlebar .menu span:hover{background:var(--bg4)}
+/* Main layout */
+.main{flex:1;display:flex;overflow:hidden}
+/* Activity bar */
+.activity{width:48px;background:var(--bg3);display:flex;flex-direction:column;align-items:center;padding-top:4px;border-right:1px solid var(--border)}
+.activity .icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--dim);font-size:20px;position:relative}
+.activity .icon:hover{color:var(--text)}
+.activity .icon.active{color:var(--text);border-left:2px solid var(--accent)}
+.activity .icon .badge{position:absolute;top:8px;right:8px;background:var(--accent);color:#fff;font-size:9px;padding:1px 5px;border-radius:8px}
+/* Sidebar */
+.sidebar{width:260px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-header{padding:10px 16px;font-size:11px;text-transform:uppercase;color:var(--dim);letter-spacing:1px;border-bottom:1px solid var(--border)}
+.sidebar-content{flex:1;overflow-y:auto;padding:8px}
+/* Editor area */
+.editor-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;background:var(--bg3);border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:8px 16px;font-size:12px;cursor:pointer;border-right:1px solid var(--border);color:var(--dim);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--bg);color:var(--text);border-top:1px solid var(--accent)}
+.tab .close{opacity:0;font-size:14px;border-radius:4px;padding:0 4px}
+.tab:hover .close{opacity:1}
+.tab .close:hover{background:var(--bg4)}
+.editor{flex:1;overflow:hidden}
+.editor textarea{width:100%;height:100%;background:var(--bg);color:var(--text);border:none;padding:16px;font:13px/1.6 'SF Mono',Monaco,'Cascadia Code',monospace;resize:none;outline:none;tab-size:2}
+/* Bottom panel */
+.bottom-panel{height:200px;border-top:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column}
+.bottom-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px}
+.bottom-tab{padding:6px 12px;font-size:11px;cursor:pointer;color:var(--dim);text-transform:uppercase}
+.bottom-tab:hover{color:var(--text)}
+.bottom-tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.bottom-content{flex:1;overflow-y:auto;padding:8px 16px;font:12px/1.4 'SF Mono',Monaco,monospace;color:var(--dim)}
+.bottom-content .line{padding:1px 0}
+.bottom-content .line .ts{color:#555;margin-right:8px}
+.bottom-content .line .info{color:var(--blue)}
+.bottom-content .line .ok{color:var(--green)}
+.bottom-content .line .err{color:var(--red)}
+/* Chat sidebar */
+.chat-panel{width:320px;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg2)}
+.chat-messages{flex:1;overflow-y:auto;padding:12px}
+.chat-msg{margin-bottom:8px;font-size:12px}
+.chat-msg .who{color:var(--dim);font-size:10px}
+.chat-msg .text{margin-top:2px;padding:6px 10px;border-radius:4px;background:var(--bg3);word-break:break-word}
+.chat-msg.you .text{background:#1a3a5a}
+.chat-input{display:flex;border-top:1px solid var(--border);padding:8px}
+.chat-input input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:4px;font-size:12px}
+.chat-input button{margin-left:6px;background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer}
+/* Vault */
+.vault-item{padding:8px 12px;border-bottom:1px solid var(--bg4);cursor:pointer;font-size:12px}
+.vault-item:hover{background:var(--bg3)}
+.vault-item .name{color:var(--blue)}
+.vault-item .meta{color:var(--dim);font-size:10px}
+/* Model selector */
+.model-row{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px}
+.model-row label{width:80px;color:var(--dim)}
+.model-row select{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px}
+/* Tree items */
+.tree-item{padding:4px 8px 4px 16px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
+.tree-item:hover{background:var(--bg3)}
+.tree-item .indent{width:16px;display:inline-block}
+.tree-header{padding:6px 8px;font-size:11px;color:var(--dim);text-transform:uppercase;display:flex;justify-content:space-between}
 </style>
 </head>
 <body>
-<div id="chat">
-  <div id="log"></div>
-  <div id="box"><input id="in" placeholder="type here…" autocomplete="off"><button onclick="send()">Send</button></div>
+
+<div class="titlebar">
+  <div class="menu">
+    <span>File</span><span>Edit</span><span>View</span><span>Run</span><span>Help</span>
+  </div>
+  <span style="margin-left:auto">qpbot — CTF Command Center</span>
 </div>
-<div id="rail"><h3 style="margin-top:0">H-task rail</h3><div id="tasks"></div>
-  <div class="card"><h3>Provider + key</h3>
-    <label>OpenAI-compatible base URL</label>
-    <input id="base" class="cfg" type="text" placeholder="https://api.openai.com/v1">
-    <label>Model</label>
-    <input id="model" class="cfg" type="text" placeholder="vendor/model">
-    <button class="ghost" onclick="saveProv()">Save provider</button>
-    <label>Paste key (goes to vault, never chat)</label>
-    <input id="key" type="password" placeholder="sk-…" autocomplete="off">
-    <button onclick="saveKey()">Store key in vault</button>
-    <p id="keystate" style="font-size:13px"></p>
+
+<div class="main">
+  <!-- Activity Bar -->
+  <div class="activity">
+    <div class="icon active" onclick="switchView('chat')" title="Chat">💬</div>
+    <div class="icon" onclick="switchView('files')" title="Files">📄</div>
+    <div class="icon" onclick="switchView('vault')" title="Vault">🔑</div>
+    <div class="icon" onclick="switchView('models')" title="Models">🤖</div>
+    <div class="icon" onclick="switchView('subagents')" title="Sub-agents">⚙<span class="badge" id="badge-sa">0</span></div>
+    <div class="icon" onclick="switchView('terminal')" title="Terminal">🖥</div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header" id="sidebar-title">Chat</div>
+    <div class="sidebar-content" id="sidebar-content"></div>
+  </div>
+
+  <!-- Editor Area -->
+  <div class="editor-area">
+    <div class="tabs" id="editor-tabs"></div>
+    <div class="editor" id="editor-main">
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim)">
+        <div style="text-align:center">
+          <div style="font-size:48px;margin-bottom:16px">qpbot</div>
+          <div style="font-size:14px">Select a file or start chatting</div>
+        </div>
+      </div>
+    </div>
+    <!-- Bottom Panel -->
+    <div class="bottom-panel">
+      <div class="bottom-tabs">
+        <div class="bottom-tab active" onclick="showBottom('output')">Output</div>
+        <div class="bottom-tab" onclick="showBottom('missions')">Missions</div>
+        <div class="bottom-tab" onclick="showBottom('runs')">Runs</div>
+      </div>
+      <div class="bottom-content" id="bottom-content"></div>
+    </div>
+  </div>
+
+  <!-- Chat Panel -->
+  <div class="chat-panel" id="chat-panel">
+    <div class="sidebar-header">Agent</div>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input">
+      <input id="chat-in" placeholder="Message agent...">
+      <button onclick="sendChat()">→</button>
+    </div>
   </div>
 </div>
+
 <script>
-const tok = new URLSearchParams(location.search).get("token") || "";
-const api = (m, p, b, opts) => {
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), opts?.timeoutMs || 15000);
-  return fetch(p + "?token=" + encodeURIComponent(tok), {
-    method: m, headers: {"Content-Type": "application/json"},
-    body: b ? JSON.stringify(b) : undefined,
-    signal: ctrl.signal }).finally(() => clearTimeout(tid)).then(r => r.json());
+const T=new URLSearchParams(location.search).get("token")||"";
+const api=(m,p,b,o)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),o?.timeoutMs||30000);return fetch(p+"?token="+encodeURIComponent(T),{method:m,headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined,signal:c.signal}).finally(()=>clearTimeout(t)).then(r=>r.json())};
+
+let currentView='chat';let openFiles=[];let activeFile=null;
+
+// Views
+const views={
+  chat:{title:'Chat',render:renderChatSidebar},
+  files:{title:'Explorer',render:renderFilesSidebar},
+  vault:{title:'Vault',render:renderVaultSidebar},
+  models:{title:'Models',render:renderModelsSidebar},
+  subagents:{title:'Sub-agents',render:renderSASidebar},
+  terminal:{title:'Terminal',render:renderTerminalSidebar},
 };
-const log = document.getElementById("log"), box = document.getElementById("in");
-function say(who, text) {
-  const d = document.createElement("div");
-  d.className = "msg" + (who === "you" ? " you" : "");
-  d.innerHTML = "<small>" + who + "</small><br>" + text.replace(/</g, "&lt;");
-  log.appendChild(d); log.scrollTop = log.scrollHeight;
+
+function switchView(name){
+  currentView=name;
+  document.querySelectorAll('.activity .icon').forEach(i=>i.classList.remove('active'));
+  event.target.closest('.icon').classList.add('active');
+  document.getElementById('sidebar-title').textContent=views[name].title;
+  views[name].render();
 }
-async function send() {
-  const v = box.value.trim(); if (!v) return; box.value = "";
-  say("you", v); say("…", "thinking");
-  try { const r = await api("POST", "/api/chat", {message: v}, {timeoutMs: 35000});
-    log.lastChild.remove(); say("agent", r.reply || "(empty)"); }
-  catch (e) { log.lastChild.remove(); say("agent", "error: " + (e.name === "AbortError" ? "request timed out" : e)); }
+
+// Chat sidebar
+function renderChatSidebar(){
+  document.getElementById('sidebar-content').innerHTML=`
+    <div class="model-row"><label>Main</label><select id="m-chat"><option>mimo-v2.5</option><option>deepseek-v4-flash</option><option>gpt-4o-mini</option></select></div>
+    <div style="padding:8px"><button onclick="quickChat('Spawn wallet_hunter')" style="width:100%">Whale Hunter</button></div>
+    <div style="padding:0 8px"><button onclick="quickChat('Spawn ctf_runner')" style="width:100%">CTF Runner</button></div>
+    <div style="padding:0 8px 8px"><button onclick="quickChat('Spawn chain_scanner')" style="width:100%">Chain Scanner</button></div>
+    <div class="tree-header">History</div>
+    <div id="chat-history"></div>`;
 }
-box.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
-async function load() {
-  try {
-    const tasks = await api("GET", "/api/tasks");
-    const el = document.getElementById("tasks"); el.innerHTML = "";
-    tasks.filter(t => t.state !== "answered" && t.state !== "expired").forEach(t => {
-      const c = document.createElement("div"); c.className = "card";
-      let h = "<h3>" + t.kind + " · " + t.task_id + "</h3><p>" + t.question.replace(/</g, "&lt;") + "</p>";
-      if (t.prediction) h += "<p>prediction: <b>" + t.prediction + "</b> (" + t.confidence + ")</p>";
-      if (t.kind === "digit") {
-        h += '<div class="pad">' + [0,1,2,3,4,5,6,7,8,9].map(d =>
-          '<button class="' + (String(d) === String(t.prediction) ? "pred" : "ghost") + '" onclick="answer(\'' + t.task_id + "','" + d + "','" + (t.prediction || "") + '\')">' + d + "</button>").join("") + "</div>";
-      } else if (t.kind === "confirm") {
-        h += '<button onclick="answer(\'' + t.task_id + "','approve','')\">Approve</button> <button class="danger" onclick="answer(\'' + t.task_id + "','reject','')\">Reject</button>";
-      } else if (t.kind === "secret") {
-        h += '<input type="password" id="s-' + t.task_id + '" placeholder="paste secret">';
-      }
-      c.innerHTML = h; el.appendChild(c);
+
+// Files sidebar
+async function renderFilesSidebar(){
+  const el=document.getElementById('sidebar-content');
+  el.innerHTML='<div style="padding:8px;color:var(--dim)">Loading...</div>';
+  try{
+    const files=await api('GET','/api/files');
+    el.innerHTML='<div class="tree-header">qpbot</div>'+
+      files.map(f=>`<div class="tree-item" onclick="openFile('${f}')">${f.split('/').pop()}</div>`).join('');
+  }catch(e){el.innerHTML='<div style="padding:8px">Error loading files</div>'}
+}
+
+// Vault sidebar
+async function renderVaultSidebar(){
+  const el=document.getElementById('sidebar-content');
+  try{
+    const d=await api('GET','/api/vault');
+    el.innerHTML=d.keys.map(k=>`<div class="vault-item">
+      <div class="name">${k.name}</div>
+      <div class="meta">${k.kind} · ${k.tier} · ${k.provider||'?'} · ${k.model||'?'}</div>
+      <div class="meta">uses: ${k.usage?.calls||0} · active: ${k.active?'yes':'no'}</div>
+    </div>`).join('');
+  }catch(e){el.innerHTML='<div style="padding:8px">No vault data</div>'}
+}
+
+// Models sidebar
+function renderModelsSidebar(){
+  document.getElementById('sidebar-content').innerHTML=`
+    <div style="padding:8px;font-size:11px;color:var(--dim)">Role-based model assignment</div>
+    <div class="model-row"><label>Chat</label><select id="m-chat"><option>mimo-v2.5</option><option>deepseek-v4-flash</option></select></div>
+    <div class="model-row"><label>Sub-agent</label><select id="m-sa"><option>mimo-v2.5</option><option>deepseek-v4-flash</option></select></div>
+    <div class="model-row"><label>Worker</label><select id="m-worker"><option>mimo-v2.5</option><option>deepseek-v4-flash</option></select></div>
+    <div class="model-row"><label>CTF</label><select id="m-ctf"><option>mimo-v2.5</option><option>deepseek-v4-flash</option></select></div>
+    <div class="model-row"><label>Scanner</label><select id="m-scan"><option>mimo-v2.5</option><option>deepseek-v4-flash</option></select></div>
+    <div style="padding:12px"><button class="primary" onclick="saveModels()">Save</button></div>
+    <div style="padding:0 12px;font-size:11px;color:var(--dim)">
+      <div>Current: mimo-v2.5</div>
+      <div>Provider: opencode.ai/zen/go/v1</div>
+    </div>`;
+}
+
+// Sub-agents sidebar
+async function renderSASidebar(){
+  const el=document.getElementById('sidebar-content');
+  const sa=await api('GET','/api/subagents');
+  document.getElementById('badge-sa').textContent=Object.keys(sa).length;
+  el.innerHTML=Object.entries(sa).map(([n,info])=>`
+    <div class="vault-item" onclick="spawnSA('${n}')">
+      <div class="name">${n}</div>
+      <div class="meta">${info.description.slice(0,60)}</div>
+      <div class="meta">${info.model} · ${info.tools.length} tools</div>
+    </div>`).join('');
+}
+
+// Terminal sidebar
+function renderTerminalSidebar(){
+  document.getElementById('sidebar-content').innerHTML=`
+    <div style="padding:8px">
+      <div style="margin-bottom:8px;font-size:11px;color:var(--dim)">Quick commands</div>
+      <div class="tree-item" onclick="runCmd('smoke')">Run smoke test</div>
+      <div class="tree-item" onclick="runCmd('status')">System status</div>
+      <div class="tree-item" onclick="runCmd('vault')">Vault summary</div>
+      <div class="tree-item" onclick="runCmd('prizes')">Prize stats</div>
+      <div class="tree-item" onclick="runCmd('missions')">List missions</div>
+    </div>`;
+}
+
+// File editor
+async function openFile(path){
+  if(!openFiles.includes(path)){openFiles.push(path);renderTabs()}
+  activeFile=path;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.path===path));
+  try{
+    const d=await api('POST','/api/file/read',{path});
+    const editor=document.getElementById('editor-main');
+    editor.innerHTML=`<textarea id="file-editor" spellcheck="false">${d.content||''}</textarea>`;
+    document.getElementById('file-editor').addEventListener('keydown',e=>{
+      if(e.key==='Tab'){e.preventDefault();const t=e.target,s=t.selectionStart;t.value=t.value.substring(0,s)+'  '+t.value.substring(t.selectionEnd);t.selectionStart=t.selectionEnd=s+2}
     });
-  } catch (e) {}
+  }catch(e){document.getElementById('editor-main').innerHTML=`<div style="padding:16px;color:var(--red)">Error: ${e.message}</div>`}
 }
-async function answer(id, value, pred) {
-  await api("POST", "/api/answer", {task_id: id, value, prediction: pred});
-  load();
+
+function renderTabs(){
+  const el=document.getElementById('editor-tabs');
+  el.innerHTML=openFiles.map(p=>`<div class="tab ${p===activeFile?'active':''}" data-path="${p}" onclick="openFile('${p}')">
+    ${p.split('/').pop()}<span class="close" onclick="closeTab('${p}',event)">×</span></div>`).join('');
 }
-async function saveProv() {
-  await api("POST", "/api/provider", {base_url: document.getElementById("base").value, model: document.getElementById("model").value});
-  say("agent", "provider saved.");
+
+function closeTab(path,e){
+  e.stopPropagation();openFiles=openFiles.filter(f=>f!==path);
+  if(activeFile===path){activeFile=openFiles[openFiles.length-1];if(activeFile)openFile(activeFile);else document.getElementById('editor-main').innerHTML=''}
+  renderTabs();
 }
-async function saveKey() {
-  const k = document.getElementById("key"); if (!k.value) return;
-  await api("POST", "/api/vault-store", {name: "LLM_KEY", value: k.value, scope: "chat", ttl_s: 86400});
-  k.value = ""; document.getElementById("keystate").textContent = "stored in vault.";
-  say("agent", "key stored. chat is live.");
+
+// Chat
+function chatMsg(who,text){
+  const d=document.createElement('div');d.className='chat-msg '+(who==='you'?'you':'');
+  d.innerHTML=`<div class="who">${who}</div><div class="text">${esc(text).replace(/\n/g,'<br>')}</div>`;
+  document.getElementById('chat-messages').appendChild(d);
+  document.getElementById('chat-messages').scrollTop=999999;
 }
-load(); setInterval(load, 3000);
+function esc(s){return s.replace(/</g,'&lt;')}
+
+async function sendChat(){
+  const inp=document.getElementById('chat-in');const v=inp.value.trim();if(!v)return;inp.value='';
+  chatMsg('you',v);chatMsg('…','thinking');
+  try{const r=await api('POST','/api/chat',{message:v},{timeoutMs:60000});
+    const lg=document.getElementById('chat-messages');lg.lastChild.remove();
+    chatMsg('agent',r.reply||'(empty)');
+  }catch(e){document.getElementById('chat-messages').lastChild.remove();chatMsg('agent','Error: '+e.message)}
+}
+document.getElementById('chat-in').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat()});
+async function quickChat(msg){document.getElementById('chat-in').value=msg;sendChat()}
+
+// Actions
+async function spawnSA(name){const r=await api('POST','/api/subagent/spawn',{subagent:name});logBottom(r.ok?`Spawned ${name} (pid ${r.pid})`:`Failed: ${r.error}`)}
+async function saveModels(){logBottom('Models saved (local only for now)')}
+
+// Bottom panel
+function logBottom(text,cls='info'){
+  const el=document.getElementById('bottom-content');
+  const ts=new Date().toLocaleTimeString();
+  el.innerHTML+=`<div class="line"><span class="ts">${ts}</span><span class="${cls}">${esc(text)}</span></div>`;
+  el.scrollTop=999999;
+}
+function showBottom(name){
+  document.querySelectorAll('.bottom-tab').forEach(t=>t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('bottom-content').innerHTML='';
+  if(name==='missions')loadBottomMissions();
+  if(name==='runs')loadBottomRuns();
+}
+async function loadBottomMissions(){
+  const d=await api('GET','/api/missions');
+  d.missions.slice(0,10).forEach(m=>logBottom(`${m.status} ${m.objective.slice(0,50)}`,m.status==='done'?'ok':'info'));
+}
+async function loadBottomRuns(){
+  const d=await api('GET','/api/subagent/runs');
+  d.runs.slice(0,10).forEach(r=>logBottom(`${r.subagent}: ${r.ok?'ok':'fail'} ${r.findings} findings`,r.ok?'ok':'err'));
+}
+async function runCmd(cmd){
+  if(cmd==='smoke'){const r=await api('POST','/api/run',{cmd:'smoke'});logBottom('Smoke: '+(r.ok?'PASS':'FAIL'),r.ok?'ok':'err')}
+  if(cmd==='status'){const d=await api('GET','/api/status');logBottom(`Arena: ${d.status?.programs?.[0]?.state} | Model: ${d.provider?.model}`,'info')}
+}
+
+// Init
+renderChatSidebar();
+loadBottomMissions();
 </script>
 </body>
 </html>

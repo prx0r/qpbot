@@ -15,6 +15,9 @@ from dataclasses import dataclass, field, asdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(ROOT, "runs", "subagents")
 
+from agentcom.audit import log_subagent_spawn, log_subagent_complete
+from agentcom import monitor
+
 
 @dataclass
 class SubAgentConfig:
@@ -214,6 +217,10 @@ print(json.dumps(output))
         stderr=subprocess.STDOUT,
         start_new_session=True,  # detach from parent
     )
+
+    # Register with monitor
+    monitor.register(run_id, subagent_name, proc.pid, output_file)
+    log_subagent_spawn(subagent_name, proc.pid, run_id)
 
     return {
         "ok": True,

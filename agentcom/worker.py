@@ -29,6 +29,7 @@ from agentcom.memory import MemoryBank
 from agentcom.invlog import InvestigationLog
 from agentcom.rsi import analyze, format_insights
 from agentcom.seen import SeenTracker
+from agentcom.audit import log_tool_exec, log_llm_call
 from scanners.registry import fire as registry_fire
 
 
@@ -170,6 +171,7 @@ When you have enough findings, summarize them."""
 
         logger.log(key_name, model, tokens_in=ti, tokens_out=to,
                    cost_minor=calc_cost(model, ti, to))
+        log_llm_call(model, ti, to, actor=f"worker:{run_id}")
 
         if not text.strip():
             break
@@ -188,6 +190,10 @@ When you have enough findings, summarize them."""
             result = registry_fire(tool_name, tool_args)
             duration_ms = int((time.time() - t0) * 1000)
             result_str = json.dumps(result)
+
+            # Audit log
+            log_tool_exec(tool_name, tool_args, actor=f"worker:{run_id}",
+                         result={"ok": result.get("ok"), "duration_ms": duration_ms})
 
             # ── RSI Step 3: Log investigation step ──
             invlog.log_step(run_id, tool_name, tool_args,
